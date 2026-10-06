@@ -1,7 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { createClient } from "../../lib/supabase/server";
+import { createClient, ensureFarmForCurrentUser } from "../../lib/supabase/server";
 
 const safeEmail = (value) => String(value || "").trim().toLowerCase();
 
@@ -16,6 +16,9 @@ export async function signIn(_previousState, formData) {
   const supabase = await createClient();
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) return { error: error.message };
+
+  await ensureFarmForCurrentUser();
+
   redirect("/dashboard");
 }
 
@@ -41,8 +44,16 @@ export async function signUp(_previousState, formData) {
   });
 
   if (error) return { error: error.message };
-  if (data.session) redirect("/dashboard");
-  return { success: "Check your inbox to confirm your email. Your farm workspace will be ready after confirmation." };
+
+  if (data.session) {
+    await ensureFarmForCurrentUser({ fallbackName: farmName });
+    redirect("/dashboard");
+  }
+
+  return {
+    success:
+      "Check your inbox to confirm your email. Your farm workspace will be ready after confirmation. Refresh the dashboard after signing in if it still shows setup steps.",
+  };
 }
 
 export async function requestPasswordReset(_previousState, formData) {
@@ -66,6 +77,8 @@ export async function updatePassword(_previousState, formData) {
   const supabase = await createClient();
   const { error } = await supabase.auth.updateUser({ password });
   if (error) return { error: error.message };
+
+  await ensureFarmForCurrentUser();
   redirect("/dashboard");
 }
 

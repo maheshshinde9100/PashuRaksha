@@ -145,3 +145,48 @@ begin
   end if;
 end;
 $$;
+
+-- Self-serve farm provisioning for any authenticated user. Works even when the
+-- insert-on-auth-user trigger missed an account (e.g. user created before
+-- this migration was applied, or trigger disabled during provider sync).
+-- Any authenticated caller can ONLY create/lookup their own farm.
+create or replace function public.ensure_own_farm(p_farm_name text default 'My Farm')
+returns public.farms
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_row public.farms;
+begin
+  if v_uid is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  select * into v_row
+  from public.farms
+  where owner_id = v_uid
+  limit 1;
+
+  if v_row.id is not null then
+    return v_row;
+  end if;
+
+  insert into public.farms (owner_id, name)
+  values (v_uid, coalesce(nullif(trim(p_farm_name), ''), 'My Farm'))
+  on conflict (owner_id) do nothing;
+
+  select * into v_row
+  from public.farms
+  where owner_id = v_uid
+  limit 1;
+
+  return v_row;
+end;
+$$;
+
+revoke all on function public.ensure_own_farm(text) from public;
+grant execute on function public.ensure_own_farm(text) to authenticated, service_role;
+
+notify pgrst, 'reload schema';
