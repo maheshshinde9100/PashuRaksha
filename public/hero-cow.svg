@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 570 360" fill="none">
+  <defs>
+    <linearGradient id="coat" x1="135" y1="143" x2="355" y2="278" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFDF7"/><stop offset="1" stop-color="#E8E5D8"/>
+    </linearGradient>
+    <linearGradient id="muzzle" x1="397" y1="158" x2="441" y2="185" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#EBAE9B"/><stop offset="1" stop-color="#D98F7D"/>
+    </linearGradient>
+    <linearGradient id="grass" x1="293" y1="230" x2="293" y2="360" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#C6DDB7"/><stop offset="1" stop-color="#9FBE91"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Quiet pasture details keep the illustration grounded, not stock-like. -->
+  <circle cx="468" cy="104" r="28" fill="#F7DFA5" opacity=".72"/>
+  <path d="M0 225c68-32 121-28 183-4 62 24 117 14 177-10 74-30 137-20 210 9v140H0V225Z" fill="#D4E4C8"/>
+  <path d="M0 260c77-24 143-17 210 7 59 21 116 21 177-3 67-26 120-23 183-2v98H0v-100Z" fill="url(#grass)"/>
+  <path d="M54 237c14-17 31-22 50-16M457 229c17-19 35-22 53-15" stroke="#A9C59D" stroke-width="3" stroke-linecap="round" opacity=".8"/>
+  <path d="M88 267v12m7-12v8m-24-4v10m370-8v11m10-15v9m19-3v10m22-9v8" stroke="#86AA79" stroke-width="2.5" stroke-linecap="round" opacity=".8"/>
+  <ellipse cx="278" cy="296" rx="179" ry="13" fill="#496545" opacity=".15"/>
+
+  <!-- Tail, legs and hooves sit behind the body. -->
+  <path d="M131 173c-13 17-16 39-9 56 5 12 1 24-8 32" stroke="#292D28" stroke-width="6" stroke-linecap="round"/>
+  <path d="M114 253c-7 2-12 8-13 15 7 4 15 2 19-5l3-7" fill="#292D28"/>
+  <path d="M164 234c-4 19-7 39-6 59l1 9c1 7 7 11 14 10l4-1c6-2 9-8 7-14l-4-8 12-52" fill="#E7E3D7"/>
+  <path d="m160 291-1 9c-1 7 4 12 11 12h6c7 0 11-5 10-11l-2-9c-7 3-16 3-24-1Z" fill="#49483F"/>
+  <path d="M235 239c-3 20-5 38-3 57l1 8c1 7 7 10 14 9l4-1c6-1 9-7 7-13l-4-9 9-49" fill="#E9E5D9"/>
+  <path d="m232 291 1 10c0 6 5 11 12 11h6c7 0 11-5 10-11l-2-9c-8 3-18 3-27-1Z" fill="#48473E"/>
+  <path d="M330 228c-2 20-4 40-2 62l1 8c1 6 6 10 13 9l4-1c6-1 10-7 8-13l-4-9 11-61" fill="#E8E4D8"/>
+  <path d="m328 290 1 9c1 7 6 11 13 10l6-1c6-1 10-6 9-12l-2-8c-9 4-18 4-27 2Z" fill="#46463E"/>
+  <path d="M383 220c-1 20-1 42 2 66l1 9c1 7 7 10 13 9l4-1c7-1 10-7 8-13l-4-9 8-66" fill="#E6E2D6"/>
+  <path d="m385 288 1 9c1 7 6 11 13 10l6-1c6-1 10-6 9-12l-3-9c-8 4-17 5-26 3Z" fill="#46463E"/>
+
+  <!-- Body: warm white coat with naturally placed Holstein markings. -->
+  <path d="M119 177c5-31 30-51 68-58 48-9 124-3 158 16 27 15 42 39 42 72 0 34-21 57-57 65-53 11-151 8-190-10-27-12-34-45-21-85Z" fill="url(#coat)" stroke="#D4D1C5" stroke-width="2"/>
+  <path d="M157 137c18-14 43-19 65-18 12 1 19 9 15 20-6 16-22 22-28 34-8 14-22 19-40 17-15-2-26-12-27-25-1-11 5-21 15-28Z" fill="#292D28"/>
+  <path d="M286 128c17-7 39-4 55 5 16 9 22 22 16 34-5 10-18 11-28 8-11-3-20-11-32-10-12 1-21-4-22-15-1-9 3-17 11-22Z" fill="#292D28"/>
+  <path d="M219 216c15-11 31-13 44-7 12 5 16 16 11 27-6 13-20 19-37 20-18 1-31-8-31-20 0-8 5-15 13-20Z" fill="#292D28"/>
+  <path d="M125 185c-8 20-7 43 2 58 7 11 17 17 29 19-12-17-14-35-8-54 4-11 10-20 18-28-17-5-31-3-41 5Z" fill="#292D28"/>
+
+  <!-- Shoulder and neck rise naturally into the head. -->
+  <path d="M335 144c13-15 30-23 48-21 18 2 27 16 28 38 1 24-5 52-18 69-11 15-31 20-49 10-17-9-22-27-20-48 1-19 2-36 11-48Z" fill="url(#coat)" stroke="#D4D1C5" stroke-width="2"/>
+  <path d="M352 151c13-16 26-19 39-12 9 6 13 17 13 31-1 13-4 25-11 33-10 11-25 7-34-2-9-10-13-36-7-50Z" fill="#292D28"/>
+  <path d="M373 123c-4-17 0-31 12-39 7 9 8 22 4 37" fill="#E4E0D4" stroke="#C9C6BA" stroke-width="2"/>
+
+  <!-- Head, ears, small horns and recognisable bovine features. -->
+  <path d="M374 112c5-14 17-22 31-21 13 1 23 9 27 22 4 13 3 31-2 46-5 15-17 25-32 24-16-1-27-14-30-31-3-15-1-29 6-40Z" fill="url(#coat)" stroke="#D4D1C5" stroke-width="2"/>
+  <path d="M381 106c-16-14-29-17-39-10 7 12 20 19 35 20" fill="#F3EEE2" stroke="#D4D1C5" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M418 107c12-12 25-15 34-8-6 11-17 18-31 19" fill="#F3EEE2" stroke="#D4D1C5" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M393 94c-1-11 3-18 11-22 5 8 5 15 1 23" fill="#D8D1C2" stroke="#BEB7A8" stroke-width="1.5" stroke-linejoin="round"/>
+  <path d="M386 116c9-11 22-13 34-7 9 4 14 13 15 23-13-5-26-4-37 3-9 5-17 4-21-1 1-7 4-13 9-18Z" fill="#292D28"/>
+  <path d="M398 131c2-2 5-2 7 0" stroke="#F8F5EB" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="401" cy="132" r="2.6" fill="#252923"/>
+  <circle cx="401.8" cy="131.2" r=".8" fill="#FFFDF7"/>
+  <path d="M416 135c2-2 5-2 7 0" stroke="#F8F5EB" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="419" cy="136" r="2.6" fill="#252923"/>
+  <circle cx="419.8" cy="135.2" r=".8" fill="#FFFDF7"/>
+  <path d="M386 143c4 2 7 1 10-1" stroke="#B0A99B" stroke-width="1.5" stroke-linecap="round"/>
+  <path d="M405 150c8-2 17 1 23 8 5 6 6 13 2 19-7 10-27 12-41 5-8-4-11-11-8-19 3-7 12-11 24-13Z" fill="url(#muzzle)" stroke="#CE8877" stroke-width="1.5"/>
+  <ellipse cx="399" cy="168" rx="2.6" ry="3.1" fill="#80584F"/>
+  <ellipse cx="422" cy="169" rx="2.6" ry="3.1" fill="#80584F"/>
+  <path d="M408 177c3 2 7 2 10 0" stroke="#A96E62" stroke-width="1.5" stroke-linecap="round"/>
+  <path d="M382 176c4 8 10 13 18 15" stroke="#D2CEC2" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- A discreet livestock sensor sits on the collar. -->
+  <path d="M370 167c3 14 11 25 23 32" stroke="#355E46" stroke-width="8" stroke-linecap="round"/>
+  <path d="M370 167c3 14 11 25 23 32" stroke="#78A26C" stroke-width="3" stroke-linecap="round"/>
+  <rect x="385" y="183" width="22" height="27" rx="6" transform="rotate(-18 385 183)" fill="#315B43" stroke="#F2F5E9" stroke-width="2"/>
+  <circle cx="396" cy="195" r="3" fill="#B9E4A8"/>
+  <path d="M393 202h5" stroke="#9EC393" stroke-width="1.5" stroke-linecap="round"/>
+
+  <!-- Small foreground leaves add a hand-finished edge to the pasture. -->
+  <path d="M73 301c5-11 12-15 21-13-2 9-8 14-21 13Zm7 6c8-8 16-9 23-4-5 8-12 10-23 4Zm393-7c4-10 11-14 19-12-2 8-8 12-19 12Zm7 7c7-7 14-8 21-3-4 7-11 9-21 3Z" fill="#77996D" opacity=".75"/>
+</svg>
