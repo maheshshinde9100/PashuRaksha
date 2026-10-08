@@ -17,9 +17,13 @@ export async function addAnimal(_previousState, formData) {
   const { data: farm, error: farmError } = await supabase.from("farms").select("id").eq("owner_id", user.id).maybeSingle();
   if (farmError || !farm) return { error: "Your farm workspace is not ready yet. Refresh after verifying your email." };
 
-  const { error } = await supabase.from("animals").insert({ farm_id: farm.id, name, tag, breed: breed || null });
+  const { data: animal, error } = await supabase
+    .from("animals")
+    .insert({ farm_id: farm.id, name, tag, breed: breed || null })
+    .select("id, name, tag, breed, status, created_at")
+    .single();
   if (error) return { error: error.code === "23505" ? "That animal ID is already in use on this farm." : error.message };
 
   revalidatePath("/dashboard");
-  return { success: `${name} has been added to your herd.` };
+  return { success: `${name} has been added to your herd.`, animal };
 }

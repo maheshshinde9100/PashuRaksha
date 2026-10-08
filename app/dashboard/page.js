@@ -99,6 +99,7 @@ export default async function DashboardPage() {
     .order("name");
 
   const animalIds = (animals || []).map((animal) => animal.id);
+  const readingLimit = Math.max(600, animals.length * 40);
   const [
     { data: readings = [], error: readingsError },
     { data: alerts = [], error: alertsError },
@@ -111,7 +112,7 @@ export default async function DashboardPage() {
           )
           .in("animal_id", animalIds)
           .order("recorded_at", { ascending: false })
-          .limit(200),
+          .limit(readingLimit),
         supabase
           .from("alerts")
           .select(
@@ -119,7 +120,7 @@ export default async function DashboardPage() {
           )
           .eq("farm_id", farm.id)
           .order("created_at", { ascending: false })
-          .limit(40),
+          .limit(80),
       ])
     : [{ data: [], error: null }, { data: [], error: null }];
 

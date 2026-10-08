@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { signOut } from "../actions/auth";
 import { addAnimal } from "../actions/animals";
 import { createClient } from "../../lib/supabase/browser";
@@ -95,28 +95,47 @@ function deriveHealth(reading) {
   return { label: "Alert", tone: "critical", note: issues.join(" · ") };
 }
 
-export default function DashboardClient({ farm, user, initialAnimals, initialReadings, initialAlerts, dataError }) {
-  const [animals, setAnimals] = useState(initialAnimals);
-  const [readings, setReadings] = useState(initialReadings);
-  const [alerts, setAlerts] = useState(initialAlerts);
-  const [live, setLive] = useState(false);
+export default function DashboardClient({ user, farm, initialReadings, initialAnimals, initialAlerts, initialError }) {
+  const [addState, addAction, adding] = useActionState(addAnimal, null);
   const [mobileNav, setMobileNav] = useState(false);
-  const [addState, addAction, adding] = useActionState(addAnimal, undefined);
+  const [readings, setReadings] = useState(initialReadings);
+  const baseAnimals = useMemo(() => {
+    if (!addState?.animal) return initialAnimals;
+    const next = [addState.animal, ...initialAnimals.filter((x) => x.id !== addState.animal.id)];
+    next.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    return next;
+  }, [initialAnimals, addState]);
+  const animals = baseAnimals;
+  const animalsRef = useRef(animals);
+  const [alerts, setAlerts] = useState(initialAlerts);
+  const [dataError] = useState(initialError);
+  const [live, setLive] = useState(false);
+  const [liveSince, setLiveSince] = useState(null);
+  const [fresh, setFresh] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => { animalsRef.current = animals; }, [animals]);
 
   const latestByAnimal = useMemo(() => {
     const byAnimal = new Map();
-    [...readings]
-      .sort((a, b) => new Date(b.recorded_at) - new Date(a.recorded_at))
-      .forEach((reading) => {
-        if (!byAnimal.has(reading.animal_id)) byAnimal.set(reading.animal_id, reading);
-      });
+    for (const reading of readings) {
+      if (!byAnimal.has(reading.animal_id)) byAnimal.set(reading.animal_id, reading);
+    }
     return byAnimal;
   }, [readings]);
 
-  const activeAlerts = alerts.filter((alert) => !alert.resolved_at);
+  const activeAlerts = useMemo(() => alerts.filter((alert) => !alert.resolved_at), [alerts]);
+  const alertsByAnimal = useMemo(() => {
+    const byId = new Map();
+    for (const alert of activeAlerts) {
+      if (!byId.has(alert.animal_id)) byId.set(alert.animal_id, []);
+      byId.get(alert.animal_id).push(alert);
+    }
+    return byId;
+  }, [activeAlerts]);
 
   const { healthyCount, attentionCount, criticalCount } = useMemo(() => {
-    let h = 0, a = 0, c = 0;
+    let h = 0; let a = 0; let c = 0;
     animals.forEach((animal) => {
       const r = latestByAnimal.get(animal.id);
       const { tone } = deriveHealth(r);
@@ -134,28 +153,62 @@ export default function DashboardClient({ farm, user, initialAnimals, initialRea
     };
   }, [animals, latestByAnimal]);
 
+  useEffect(() => { if (fresh) { const t = setTimeout(() => setFresh(false), 1400); return () => clearTimeout(t); } }, [fresh]);
+
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 5000);
+    return () => clearInterval(id);
+  }, []);
+
+  const freshnessText = useMemo(() => {
+    const newest = readings[0]?.recorded_at;
+    const currentTime = nowMs;
+    if (!newest) return live ? "Live · on" : "Waiting for device data";
+    const secs = Math.max(0, Math.floor((currentTime - new Date(newest).getTime()) / 1000));
+    if (!live) return `${secs < 60 ? `Last data ${secs}s ago` : formatAgo(newest, currentTime)}`;
+    if (secs < 5) return "Live · updated <5s ago";
+    if (secs < 60) return `Live · updated ${secs}s ago`;
+    if (secs < 3600) return `Live · ${Math.floor(secs / 60)}m ago`;
+    return "Live · on";
+  }, [readings, live, nowMs]);
+
   useEffect(() => {
     if (!initialAnimals.length) return undefined;
     let channel;
     try {
       const supabase = createClient();
-      const animalIds = new Set(initialAnimals.map((animal) => animal.id));
       channel = supabase
-        .channel(`farm-live-${farm.id}`)
-        .on("postgres_changes", { event: "INSERT", schema: "public", table: "sensor_readings" }, ({ new: row }) => {
-          if (!animalIds.has(row.animal_id)) return;
-          setReadings((current) => [row, ...current.filter((item) => item.id !== row.id)].slice(0, 200));
+        .channel(`farm-live-${farm.id}`, {
+          config: { broadcast: { ack: false }, presence: { key: "" } },
         })
-        .on("postgres_changes", { event: "*", schema: "public", table: "alerts" }, ({ new: row }) => {
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "sensor_readings" }, ({ new: row }) => {
+          const set = new Set(animalsRef.current.map((x) => x.id));
+          if (!set.has(row.animal_id)) return;
+          setReadings((now) => {
+            const next = [row, ...now.filter((item) => item.id !== row.id)];
+            return next.length > 400 ? next.slice(0, 400) : next;
+          });
+          setFresh(true);
+        })
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "alerts" }, ({ new: row }) => {
           if (row.farm_id !== farm.id) return;
           setAlerts((current) => [row, ...current.filter((item) => item.id !== row.id)].slice(0, 40));
+          setFresh(true);
         })
-        .subscribe((status) => setLive(status === "SUBSCRIBED"));
+        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "alerts" }, ({ new: row }) => {
+          if (row.farm_id !== farm.id) return;
+          setAlerts((current) => [row, ...current.filter((item) => item.id !== row.id)].slice(0, 40));
+          setFresh(true);
+        })
+        .subscribe((status) => {
+          if (status === "SUBSCRIBED") { setLive(true); setLiveSince(Date.now()); }
+          else setLive(false);
+        });
     } catch {
       channel = null;
     }
-    return () => { if (channel) createClient().removeChannel(channel); };
-  }, [farm.id, initialAnimals]);
+    return () => { if (channel) try { createClient().removeChannel(channel); } catch {} };
+  }, [farm.id, initialAnimals.length]);
 
   return (
     <main className="min-h-screen bg-[#f5f8f3] text-[#183d2c]">
@@ -248,12 +301,18 @@ export default function DashboardClient({ farm, user, initialAnimals, initialRea
 
           <div className="flex items-center gap-3">
             <span
-              className={`hidden items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-medium sm:inline-flex ${
-                live ? "bg-[#e7f2e5] text-[#347247]" : "bg-[#efeee8] text-[#6e756c]"
-              }`}
+              className={`hidden items-center gap-2 rounded-full border px-2.5 py-1 text-[10px] font-medium sm:inline-flex ${
+                fresh ? "border-[#cde5c4] bg-[#e7f2e5] text-[#2f7a4b]" :
+                live ? "border-[#d7e3d1] bg-[#e9f2e4] text-[#347247]" : "border-[#e3e2d7] bg-[#efeee8] text-[#6e756c]"
+              } transition-colors`}
             >
-              <i className={`h-1.5 w-1.5 rounded-full ${live ? "animate-pulse bg-[#4a9a5a]" : "bg-[#aaa99c]"}`} />
-              {live ? "Live updates on" : "Waiting for device"}
+              <i className={`h-1.5 w-1.5 rounded-full ${
+                fresh ? "animate-ping bg-[#4a9a5a] opacity-100" :
+                live ? "bg-[#4a9a5a]" : "bg-[#aaa99c]"
+              } ${fresh ? "" : live ? "animate-pulse" : ""}`} />
+              <span className="flex items-center gap-2">
+                {fresh ? "Just received a new reading" : freshnessText}
+              </span>
             </span>
             <span className="grid h-8 w-8 place-items-center rounded-full bg-[#216644] text-xs font-semibold text-white">
               {initials(user.name)}
@@ -359,20 +418,27 @@ export default function DashboardClient({ farm, user, initialAnimals, initialRea
             </div>
 
             <div className="mt-5 overflow-x-auto">
-              <table className="w-full min-w-[760px] text-left">
+              <table className="w-full min-w-[860px] text-left">
                 <thead>
-                  <tr className="border-y border-[#edf1eb] text-[10px] uppercase tracking-wider text-[#899589]">
-                    <th className="py-3 pl-2 font-medium">Animal</th>
-                    <th className="py-3 font-medium">Temperature</th>
-                    <th className="py-3 font-medium">Heart rate</th>
-                    <th className="py-3 font-medium">Motion</th>
-                    <th className="py-3 font-medium">Health status</th>
-                    <th className="py-3 pr-2 font-medium">Last sample</th>
+                  <tr className="border-y border-[#edf1eb] bg-[#f9fbf7] text-[11px] uppercase tracking-[.12em] text-[#879688]">
+                    <th className="py-4 pl-3 font-semibold sm:pl-4">Animal</th>
+                    <th className="py-4 font-semibold">Temperature</th>
+                    <th className="py-4 font-semibold">Heart rate</th>
+                    <th className="py-4 font-semibold">Motion</th>
+                    <th className="py-4 font-semibold">Health status</th>
+                    <th className="py-4 pr-3 text-right font-semibold sm:pr-4">Last sample</th>
                   </tr>
                 </thead>
                 <tbody>
                   {animals.map((animal) => (
-                    <AnimalRow key={animal.id} animal={animal} reading={latestByAnimal.get(animal.id)} />
+                    <AnimalRow
+                      key={animal.id}
+                      animal={animal}
+                      reading={latestByAnimal.get(animal.id)}
+                      alerts={alertsByAnimal.get(animal.id) || []}
+                      flash={fresh && Boolean(latestByAnimal.get(animal.id) && readings[0]?.animal_id === animal.id)}
+                      nowMs={nowMs}
+                    />
                   ))}
                 </tbody>
               </table>
@@ -429,7 +495,7 @@ export default function DashboardClient({ farm, user, initialAnimals, initialRea
                 )}
                 {addState?.success && (
                   <p role="status" className="text-xs text-[#347247] sm:col-span-3">
-                    {addState.success} Refresh to see the updated profile.
+                    {addState.success}
                   </p>
                 )}
               </form>
@@ -534,43 +600,124 @@ function TemperatureChart({ readings }) {
   );
 }
 
-function AnimalRow({ animal, reading }) {
+function AnimalRow({ animal, reading, alerts = [], flash = false, nowMs = 0 }) {
   const health = deriveHealth(reading);
-  const tones = {
-    good: "bg-[#eaf5ef] text-[#347247]",
-    info: "bg-[#eef3f9] text-[#2f5a85]",
-    warning: "bg-[#fbf3df] text-[#967116]",
-    critical: "bg-[#fbe2d4] text-[#8e3c2c]",
-    neutral: "bg-[#eff1eb] text-[#748071]",
-  };
+
+  const pillTones = {
+    good: { wrap: "bg-[#e6f4ec] text-[#2b6b43]", ring: "ring-[#d9eadf]" },
+    info: { wrap: "bg-[#eef3f9] text-[#2f5a85]", ring: "ring-[#dbe5f2]" },
+    warning: { wrap: "bg-[#fbf3df] text-[#856216]", ring: "ring-[#f1e7c8]" },
+    critical: { wrap: "bg-[#fbe2d4] text-[#7f3325]", ring: "ring-[#f4ccb6]" },
+    neutral: { wrap: "bg-[#eff1eb] text-[#5d6b5a]", ring: "ring-[#e5eadc]" },
+  }[health.tone] || { wrap: "bg-[#eff1eb] text-[#5d6b5a]", ring: "ring-[#e5eadc]" };
+
+  const valueTones = {
+    good: "text-[#315946]",
+    info: "text-[#2f5a85]",
+    warning: "text-[#8a5d0f]",
+    critical: "text-[#7f3325]",
+    neutral: "text-[#526b57]",
+  }[health.tone] || "text-[#526b57]";
+
+  const statusReasons = (() => {
+    const out = [];
+    if (alerts.length) {
+      const titles = alerts
+        .slice(0, 2)
+        .map((a) => (a.title || "").trim())
+        .filter(Boolean);
+      if (titles.length) out.push(...titles);
+    } else if (health.note) {
+      out.push(health.note);
+    }
+    return out.slice(0, 2);
+  })();
+
+  const temperature = reading?.temperature_c;
+  const heartRate = reading?.heart_rate_bpm;
+  const motion = reading?.motion_pct ?? reading?.activity_level;
+
   return (
-    <tr className="border-b border-[#f0f3ee] text-xs last:border-0">
-      <td className="py-3.5 pl-2">
-        <div className="flex items-center gap-3">
-          <span className="grid h-8 w-8 place-items-center rounded-lg bg-[#eef4eb] text-[#39754a]">
+    <tr className={`border-b border-[#eef3ec] last:border-0 transition-colors ${
+      flash ? "bg-[#f2fbf0]" : ""
+    }`}>
+      <td className="py-5 pl-3 sm:pl-4">
+        <div className="flex items-center gap-3.5">
+          <span className="grid h-11 w-11 place-items-center rounded-xl bg-[#e9f2e7] text-[#34704c]">
             <Icon type="herd" />
           </span>
-          <span>
-            <b className="block font-medium text-[#315946]">{animal.name}</b>
-            <small className="mt-0.5 block text-[#899589]">
-              {animal.tag}{animal.breed ? ` · ${animal.breed}` : ""}
-            </small>
-          </span>
+          <div className="min-w-0">
+            <p className="truncate text-[15px] font-semibold tracking-tight text-[#22432e]">{animal.name}</p>
+            <p className="mt-0.5 truncate text-[12px] text-[#829083]">
+              <span className="font-medium text-[#667a67]">{animal.tag}</span>
+              {animal.breed ? <span className="mx-1 text-[#b0bdb1]">·</span> : null}
+              {animal.breed ? <span>{animal.breed}</span> : null}
+            </p>
+          </div>
         </div>
       </td>
-      <td className="py-3.5 text-[#526b57]">{reading?.temperature_c == null ? "—" : `${Number(reading.temperature_c).toFixed(1)} °C`}</td>
-      <td className="py-3.5 text-[#526b57]">{reading?.heart_rate_bpm == null ? "—" : `${reading.heart_rate_bpm} bpm`}</td>
-      <td className="py-3.5 text-[#526b57]">{(reading?.motion_pct ?? reading?.activity_level) == null ? "—" : `${Number(reading?.motion_pct ?? reading?.activity_level).toFixed(0)}%`}</td>
-      <td className="py-3.5">
-        <div className="flex flex-col gap-1">
-          <span className={`inline-flex w-fit items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-medium ${tones[health.tone]}`}>
-            <Icon type="health" />
+
+      <td className="py-5">
+        <div className="flex flex-col">
+          <span className={`text-[20px] font-semibold leading-tight ${
+            temperature != null && (Number(temperature) < 37 || Number(temperature) >= 39.6)
+              ? "text-[#8a5d0f]"
+              : "text-[#2f6b46]"
+          }`}>
+            {temperature == null ? "—" : `${Number(temperature).toFixed(1)}°`}
+          </span>
+          <span className="mt-1 text-[11px] text-[#899589]">Temperature</span>
+        </div>
+      </td>
+
+      <td className="py-5">
+        <div className="flex flex-col">
+          <span className={`text-[20px] font-semibold leading-tight ${
+            heartRate != null && (Number(heartRate) < 40 || Number(heartRate) > 95)
+              ? "text-[#7f3325]"
+              : "text-[#2f6b46]"
+          }`}>
+            {heartRate == null ? "—" : `${Number(heartRate).toFixed(0)}`}
+          </span>
+          <span className="mt-1 text-[11px] text-[#899589]">Heart rate · bpm</span>
+        </div>
+      </td>
+
+      <td className="py-5">
+        <div className="flex flex-col">
+          <span className={`text-[20px] font-semibold leading-tight ${valueTones}`}>
+            {motion == null ? "—" : `${Number(motion).toFixed(0)}%`}
+          </span>
+          <span className="mt-1 text-[11px] text-[#899589]">Motion</span>
+        </div>
+      </td>
+
+      <td className="py-5">
+        <div className="flex flex-col gap-2 max-w-[240px]">
+          <span className={`inline-flex w-fit items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-semibold ring-1 ring-inset ${pillTones.wrap} ${pillTones.ring}`}>
+            <span className="h-1.5 w-1.5 rounded-full bg-current opacity-90" />
             {health.label}
           </span>
-          {health.note && <span className="text-[10px] text-[#718073]">{health.note}</span>}
+          {statusReasons.length > 0 && (
+            <p className="text-[12px] leading-5 text-[#5c6c5d]">
+              {statusReasons.join(" · ")}
+            </p>
+          )}
         </div>
       </td>
-      <td className="py-3.5 pr-2 text-[11px] text-[#718073]">{reading?.recorded_at ? formatTime(reading.recorded_at) : "—"}</td>
+
+      <td className="py-5 pr-3 sm:pr-4 text-right">
+        <div className="flex flex-col items-end">
+          <time className="text-[14px] font-medium text-[#315946]">
+            {reading?.recorded_at ? formatDateTime(reading.recorded_at) : "Waiting"}
+          </time>
+          {reading?.recorded_at && (
+            <span className="mt-1 text-[11px] text-[#899589]">
+              {formatAgo(reading.recorded_at, nowMs)}
+            </span>
+          )}
+        </div>
+      </td>
     </tr>
   );
 }
@@ -624,14 +771,34 @@ function formatTime(value) {
     month: "short",
     hour: "2-digit",
     minute: "2-digit",
-    timeZone: "UTC",
   });
+}
+
+function formatDateTime(value) {
+  return new Date(value).toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).replace(/^(\d{2} \w{3}) (\d{2}:\d{2})$/, "$1, $2");
+}
+
+function formatAgo(value, currentTime = null) {
+  const base = typeof currentTime === "number" ? currentTime : (Date.now ? Date.now() : 0);
+  const seconds = Math.max(0, Math.floor((base - new Date(value).getTime()) / 1000));
+  if (seconds < 5) return "just now";
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}${minutes === 1 ? " min" : " mins"} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}${days === 1 ? " day" : " days"} ago`;
 }
 
 function formatShortDate(value) {
   return new Date(value).toLocaleDateString("en-GB", {
     day: "2-digit",
     month: "short",
-    timeZone: "UTC",
   });
 }
