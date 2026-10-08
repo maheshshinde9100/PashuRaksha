@@ -35,6 +35,10 @@ const Icon = ({ type = "pulse" }) => (
       ? <><path d="M18 6 6 18" /><path d="m6 6 12 12" /></>
       : type === "plus"
       ? <><path d="M12 5v14" /><path d="M5 12h14" /></>
+      : type === "thermo"
+      ? <><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z" /></>
+      : type === "health"
+      ? <><path d="M12 21s-7.5-4.6-7.5-10a5 5 0 0 1 9-3 5 5 0 0 1 9 3C19.5 16.4 12 21 12 21z" /></>
       : null}
   </svg>
 );
@@ -50,9 +54,46 @@ const BrandMark = () => (
 const navItems = [
   ["Overview", "overview", "overview"],
   ["My herd", "herd", "herd"],
-  ["Health history", "history", "history"],
-  ["Alerts", "alerts", "alert"],
 ];
+
+function deriveHealth(reading) {
+  if (!reading) return { label: "Awaiting data", tone: "neutral", note: "No recent reading" };
+  const t = reading.temperature_c;
+  const m = reading.motion_pct ?? reading.activity_level;
+  const hr = reading.heart_rate_bpm;
+  const h = reading.humidity_pct;
+
+  const issues = [];
+  let maxLevel = 0;
+
+  if (t != null) {
+    if (t >= 40.5) { issues.push("Very high temp"); maxLevel = Math.max(maxLevel, 3); }
+    else if (t >= 39.6) { issues.push("High temperature"); maxLevel = Math.max(maxLevel, 2); }
+    else if (t < 37.0) { issues.push("Low temperature"); maxLevel = Math.max(maxLevel, 2); }
+  }
+
+  if (h != null) {
+    if (h >= 95) { issues.push("Extreme humidity"); maxLevel = Math.max(maxLevel, 3); }
+    else if (h >= 85) { issues.push("High humidity stress"); maxLevel = Math.max(maxLevel, 2); }
+  }
+
+  if (m != null) {
+    if (m >= 85) { issues.push("Heavy restlessness"); maxLevel = Math.max(maxLevel, 2); }
+    else if (m >= 60) { issues.push("Elevated movement"); maxLevel = Math.max(maxLevel, 1); }
+    else if (m <= 1) { issues.push("Very low movement"); maxLevel = Math.max(maxLevel, 1); }
+  }
+
+  if (hr != null && hr > 0) {
+    if (hr >= 110) { issues.push("Very high HR"); maxLevel = Math.max(maxLevel, 3); }
+    else if (hr >= 90) { issues.push("High heart rate"); maxLevel = Math.max(maxLevel, 2); }
+    else if (hr < 40) { issues.push("Low heart rate"); maxLevel = Math.max(maxLevel, 2); }
+  }
+
+  if (maxLevel === 0) return { label: "Looking well", tone: "good", note: "Vitals in range" };
+  if (maxLevel === 1) return { label: "Monitor", tone: "info", note: issues.join(" · ") };
+  if (maxLevel === 2) return { label: "Check needed", tone: "warning", note: issues.join(" · ") };
+  return { label: "Alert", tone: "critical", note: issues.join(" · ") };
+}
 
 export default function DashboardClient({ farm, user, initialAnimals, initialReadings, initialAlerts, dataError }) {
   const [animals, setAnimals] = useState(initialAnimals);
@@ -73,10 +114,25 @@ export default function DashboardClient({ farm, user, initialAnimals, initialRea
   }, [readings]);
 
   const activeAlerts = alerts.filter((alert) => !alert.resolved_at);
-  const needsAttention = animals.filter((animal) => {
-    const reading = latestByAnimal.get(animal.id);
-    return animal.status === "needs_attention" || (reading?.temperature_c != null && reading.temperature_c >= 39.5);
-  }).length;
+
+  const { healthyCount, attentionCount, criticalCount } = useMemo(() => {
+    let h = 0, a = 0, c = 0;
+    animals.forEach((animal) => {
+      const r = latestByAnimal.get(animal.id);
+      const { tone } = deriveHealth(r);
+      if (tone === "critical") c++;
+      else if (tone === "warning" || tone === "info" || animal.status === "needs_attention") a++;
+      else h++;
+    });
+    const directAttention = animals.filter((x) => x.status === "needs_attention").length;
+    const finalAttention = Math.max(a, directAttention);
+    const finalHealthy = Math.max(h, animals.length - finalAttention - c);
+    return {
+      healthyCount: Math.max(0, finalHealthy),
+      attentionCount: finalAttention,
+      criticalCount: c,
+    };
+  }, [animals, latestByAnimal]);
 
   useEffect(() => {
     if (!initialAnimals.length) return undefined;
@@ -88,19 +144,17 @@ export default function DashboardClient({ farm, user, initialAnimals, initialRea
         .channel(`farm-live-${farm.id}`)
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "sensor_readings" }, ({ new: row }) => {
           if (!animalIds.has(row.animal_id)) return;
-          setReadings((current) => [row, ...current.filter((item) => item.id !== row.id)].slice(0, 100));
+          setReadings((current) => [row, ...current.filter((item) => item.id !== row.id)].slice(0, 200));
         })
         .on("postgres_changes", { event: "*", schema: "public", table: "alerts" }, ({ new: row }) => {
           if (row.farm_id !== farm.id) return;
-          setAlerts((current) => [row, ...current.filter((item) => item.id !== row.id)].slice(0, 20));
+          setAlerts((current) => [row, ...current.filter((item) => item.id !== row.id)].slice(0, 40));
         })
         .subscribe((status) => setLive(status === "SUBSCRIBED"));
     } catch {
       channel = null;
     }
-    return () => {
-      if (channel) createClient().removeChannel(channel);
-    };
+    return () => { if (channel) createClient().removeChannel(channel); };
   }, [farm.id, initialAnimals]);
 
   return (
@@ -143,7 +197,11 @@ export default function DashboardClient({ farm, user, initialAnimals, initialRea
               </span>
               {label}
               {id === "alerts" && activeAlerts.length > 0 && (
-                <span className="ml-auto rounded-full bg-[#f5e5bd] px-2 py-0.5 text-[10px] font-medium text-[#725514]">
+                <span className={`ml-auto rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                  activeAlerts.some((a) => a.severity === "critical")
+                    ? "bg-[#f5d9cf] text-[#8e3c2c]"
+                    : "bg-[#f5e5bd] text-[#725514]"
+                }`}>
                   {activeAlerts.length}
                 </span>
               )}
@@ -151,17 +209,7 @@ export default function DashboardClient({ farm, user, initialAnimals, initialRea
           ))}
         </nav>
 
-        <div className="mt-auto rounded-xl bg-[#f2f6ef] p-4">
-          <p className="text-xs font-semibold text-[#315946]">Need a hand?</p>
-          <p className="mt-1.5 text-xs leading-5 text-[#718073]">
-            Connect your IoT device to start seeing live health readings here.
-          </p>
-          <a href="mailto:hello@pashuraksha.in" className="mt-3 inline-block text-xs font-semibold text-[#34704c]">
-            Contact support →
-          </a>
-        </div>
-
-        <form action={signOut} className="mt-5">
+        <form action={signOut} className="mt-auto">
           <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-[#617166] hover:bg-[#f5f8f3]">
             <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#e9f2e7] text-[#34704c]">
               <Icon type="logout" />
@@ -176,10 +224,10 @@ export default function DashboardClient({ farm, user, initialAnimals, initialRea
 
       {mobileNav && (
         <button
-        aria-label="Close navigation"
-        className="fixed inset-0 z-30 bg-[#183d2c]/20 lg:hidden"
-        onClick={() => setMobileNav(false)}
-      />
+          aria-label="Close navigation"
+          className="fixed inset-0 z-30 bg-[#183d2c]/20 lg:hidden"
+          onClick={() => setMobileNav(false)}
+        />
       )}
 
       <div className="min-h-screen lg:pl-[252px]">
@@ -201,8 +249,8 @@ export default function DashboardClient({ farm, user, initialAnimals, initialRea
           <div className="flex items-center gap-3">
             <span
               className={`hidden items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-medium sm:inline-flex ${
-              live ? "bg-[#e7f2e5] text-[#347247]" : "bg-[#efeee8] text-[#6e756c]"
-            }`}
+                live ? "bg-[#e7f2e5] text-[#347247]" : "bg-[#efeee8] text-[#6e756c]"
+              }`}
             >
               <i className={`h-1.5 w-1.5 rounded-full ${live ? "animate-pulse bg-[#4a9a5a]" : "bg-[#aaa99c]"}`} />
               {live ? "Live updates on" : "Waiting for device"}
@@ -219,10 +267,10 @@ export default function DashboardClient({ farm, user, initialAnimals, initialRea
               <div>
                 <p className="text-sm font-medium text-[#3f7650]">{greeting()}, {user.name.split(" ")[0]}</p>
                 <h1 className="mt-1.5 text-2xl font-semibold tracking-[-.04em] sm:text-[2rem]">
-                  Here’s your herd at a glance.
+                  Your herd health at a glance.
                 </h1>
                 <p className="mt-2 text-sm text-[#718073]">
-                  A practical read on animal health, activity and what may need your attention.
+                  Temperature, motion and heart rate are evaluated in real time; unusual readings raise alerts automatically.
                 </p>
               </div>
               <p className="text-xs text-[#879387]">
@@ -243,9 +291,9 @@ export default function DashboardClient({ farm, user, initialAnimals, initialRea
 
             <div className="mt-7 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <Metric label="Animals in your herd" value={animals.length} note="Registered on this farm" tone="green" icon="herd" />
-              <Metric label="Looking well" value={Math.max(animals.length - needsAttention, 0)} note="Based on latest readings" tone="mint" icon="check" />
-              <Metric label="Needs a check" value={needsAttention} note="Temperature or status flagged" tone="amber" icon="alert" />
-              <Metric label="Open alerts" value={activeAlerts.length} note="Unresolved notifications" tone="neutral" icon="bell" />
+              <Metric label="Looking well" value={healthyCount} note="Vitals in reference range" tone="mint" icon="check" />
+              <Metric label="Needs a check" value={attentionCount} note="Monitor or treat soon" tone="amber" icon="alert" />
+              <Metric label="Critical / open alerts" value={criticalCount + activeAlerts.filter((a) => a.severity === "critical").length} note="Unresolved / severe" tone="red" icon="bell" />
             </div>
           </section>
 
@@ -253,18 +301,18 @@ export default function DashboardClient({ farm, user, initialAnimals, initialRea
             <section className="rounded-xl border border-[#e1e9df] bg-white p-5 sm:p-6">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-sm font-semibold">Health trend</p>
-                  <p className="mt-1 text-xs text-[#829083]">Recent body temperature readings · °C</p>
+                  <p className="text-sm font-semibold">Body temperature trend</p>
+                  <p className="mt-1 text-xs text-[#829083]">Recent sensor readings · °C</p>
                 </div>
-                <span className="rounded-md bg-[#f2f6ef] px-2.5 py-1.5 text-[10px] font-medium text-[#526b57]">
-                  Latest 12 readings
+                <span className="inline-flex items-center gap-2 rounded-md bg-[#f2f6ef] px-2.5 py-1.5 text-[10px] font-medium text-[#526b57]">
+                  <Icon type="thermo" /> Latest 24 readings
                 </span>
               </div>
               <TemperatureChart readings={readings} />
-              <div className="mt-3 flex items-center gap-2 text-[11px] text-[#7d8c7e]">
-                <i className="h-2 w-2 rounded-full bg-[#55945d]" />
-                Temperature readings
-                <span className="ml-auto">Reference range: 38.0–39.4°C</span>
+              <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] text-[#7d8c7e]">
+                <span className="inline-flex items-center gap-2"><i className="h-2 w-2 rounded-full bg-[#55945d]" /> Temperature</span>
+                <span>Reference: 38.0–39.5 °C</span>
+                {latestByAnimal.size > 0 && <span className="ml-auto">Latest samples: {readings.length}</span>}
               </div>
             </section>
 
@@ -280,23 +328,18 @@ export default function DashboardClient({ farm, user, initialAnimals, initialRea
               </div>
               <div className="mt-4 space-y-2.5">
                 {activeAlerts.length
-                  ? activeAlerts.slice(0, 4).map((alert) => (
+                  ? activeAlerts.slice(0, 6).map((alert) => (
                       <AlertRow
                         key={alert.id}
                         alert={alert}
                         animal={animals.find((item) => item.id === alert.animal_id)}
                       />
                     ))
-                  : needsAttention
-                  ? animals
-                      .filter((animal) => latestByAnimal.get(animal.id)?.temperature_c >= 39.5)
-                      .slice(0, 4)
-                      .map((animal) => <AlertRow key={animal.id} animal={animal} synthetic />)
                   : (
                     <div className="rounded-lg bg-[#f4f8f1] p-4">
                       <p className="text-sm font-medium text-[#315946]">Nothing needs your attention right now</p>
                       <p className="mt-1 text-xs leading-5 text-[#718073]">
-                        New alerts will appear here if a reading is outside its expected range.
+                        Alerts will appear here when temperature, motion, or heart rate move outside the healthy range.
                       </p>
                     </div>
                   )}
@@ -308,7 +351,7 @@ export default function DashboardClient({ farm, user, initialAnimals, initialRea
             <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
               <div>
                 <p className="text-sm font-semibold">Your herd</p>
-                <p className="mt-1 text-xs text-[#829083]">Animal profiles and their latest available status</p>
+                <p className="mt-1 text-xs text-[#829083]">Animal profiles with derived health status from device data</p>
               </div>
               <span className="rounded-md border border-[#dce6dc] px-2.5 py-1.5 text-xs text-[#617166]">
                 {animals.length} {animals.length === 1 ? "animal" : "animals"}
@@ -316,14 +359,15 @@ export default function DashboardClient({ farm, user, initialAnimals, initialRea
             </div>
 
             <div className="mt-5 overflow-x-auto">
-              <table className="w-full min-w-[640px] text-left">
+              <table className="w-full min-w-[760px] text-left">
                 <thead>
                   <tr className="border-y border-[#edf1eb] text-[10px] uppercase tracking-wider text-[#899589]">
                     <th className="py-3 pl-2 font-medium">Animal</th>
-                    <th className="py-3 font-medium">Latest temperature</th>
+                    <th className="py-3 font-medium">Temperature</th>
                     <th className="py-3 font-medium">Heart rate</th>
-                    <th className="py-3 font-medium">Activity</th>
-                    <th className="py-3 pr-2 font-medium">Status</th>
+                    <th className="py-3 font-medium">Motion</th>
+                    <th className="py-3 font-medium">Health status</th>
+                    <th className="py-3 pr-2 font-medium">Last sample</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -339,7 +383,7 @@ export default function DashboardClient({ farm, user, initialAnimals, initialRea
                   </span>
                   <p className="mt-3 text-sm font-semibold">Start with your first animal</p>
                   <p className="mt-1 text-xs text-[#829083]">
-                    Add a profile now, then connect a device to see its readings.
+                    Add the animal profile now. The ID tag you enter (e.g. PR-001) must match <code className="rounded bg-[#f7f9f5] px-1 py-0.5">animal_tag</code> sent by the device.
                   </p>
                 </div>
               )}
@@ -356,13 +400,13 @@ export default function DashboardClient({ farm, user, initialAnimals, initialRea
                 <input
                   required
                   name="name"
-                  placeholder="Animal name"
+                  placeholder="Animal name (e.g. Ganga)"
                   className="rounded-lg border border-[#d6e1d5] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#6f9c73] focus:ring-4 focus:ring-[#dcebd7]/70"
                 />
                 <input
                   required
                   name="tag"
-                  placeholder="ID tag (e.g. PR-021)"
+                  placeholder="ID tag — must match device (e.g. PR-001)"
                   className="rounded-lg border border-[#d6e1d5] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#6f9c73] focus:ring-4 focus:ring-[#dcebd7]/70"
                 />
                 <div className="flex gap-2">
@@ -392,45 +436,8 @@ export default function DashboardClient({ farm, user, initialAnimals, initialRea
             </details>
           </section>
 
-          <section id="history" className="mt-5 scroll-mt-24 rounded-xl border border-[#e1e9df] bg-white p-5 sm:p-6">
-            <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
-              <div>
-                <p className="text-sm font-semibold">Health history</p>
-                <p className="mt-1 text-xs text-[#829083]">A record of the latest readings received from your devices</p>
-              </div>
-              <span className="text-[10px] text-[#879387]">Most recent first</span>
-            </div>
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full min-w-[600px] text-left">
-                <thead>
-                  <tr className="border-y border-[#edf1eb] text-[10px] uppercase tracking-wider text-[#899589]">
-                    <th className="py-3 pl-2 font-medium">Time recorded</th>
-                    <th className="py-3 font-medium">Animal</th>
-                    <th className="py-3 font-medium">Temperature</th>
-                    <th className="py-3 font-medium">Heart rate</th>
-                    <th className="py-3 pr-2 font-medium">Activity</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {readings.slice(0, 8).map((reading) => (
-                    <HistoryRow
-                      key={reading.id}
-                      reading={reading}
-                      animal={animals.find((item) => item.id === reading.animal_id)}
-                    />
-                  ))}
-                </tbody>
-              </table>
-              {!readings.length && (
-                <div className="py-9 text-center text-sm text-[#829083]">
-                  No readings have arrived yet. Your device readings will appear here automatically.
-                </div>
-              )}
-            </div>
-          </section>
-
           <footer className="flex flex-col gap-2 py-7 text-[11px] text-[#899589] sm:flex-row sm:justify-between">
-            <span>Private farm workspace · Data access protected by Supabase policies</span>
+            <span>Private farm workspace · Device ingest keyed by animal tag</span>
             <span>{user.email}</span>
           </footer>
         </div>
@@ -444,6 +451,7 @@ function Metric({ label, value, note, tone, icon }) {
     green: "bg-[#edf4e9] text-[#39754a]",
     mint: "bg-[#eaf5ef] text-[#347247]",
     amber: "bg-[#fbf3df] text-[#967116]",
+    red: "bg-[#fae6dd] text-[#8e3c2c]",
     neutral: "bg-[#eff1eb] text-[#637160]",
   };
   return (
@@ -462,19 +470,19 @@ function Metric({ label, value, note, tone, icon }) {
 
 function TemperatureChart({ readings }) {
   const points = readings
-    .filter((reading) => reading.temperature_c != null)
-    .slice(0, 12)
+    .filter((r) => r.temperature_c != null)
+    .slice(0, 24)
     .reverse();
   if (points.length < 2)
     return (
       <div className="mt-6 grid h-48 place-items-center rounded-lg bg-[#fbfcfa] text-center">
         <div>
           <span className="mx-auto grid h-10 w-10 place-items-center rounded-full bg-[#edf4e9] text-[#39754a]">
-            <Icon type="history" />
+            <Icon type="thermo" />
           </span>
-          <p className="mt-2 text-sm font-medium text-[#526b57]">Waiting for enough readings</p>
+          <p className="mt-2 text-sm font-medium text-[#526b57]">Waiting for temperature samples</p>
           <p className="mt-1 text-xs text-[#899589]">
-            A temperature trend appears after your device sends data.
+            A trend appears once the device sends a few readings via the telemetry API.
           </p>
         </div>
       </div>
@@ -486,14 +494,13 @@ function TemperatureChart({ readings }) {
     (value, index) => `${30 + index * (660 / (values.length - 1))},${170 - ((value - min) / (max - min)) * 145}`
   );
   const area = `30,170 ${coords.join(" ")} 690,170`;
+
+  const refLowY = 170 - ((38.0 - min) / (max - min)) * 145;
+  const refHighY = 170 - ((39.5 - min) / (max - min)) * 145;
+
   return (
     <div className="mt-5">
-      <svg
-        viewBox="0 0 720 205"
-        role="img"
-        aria-label="Temperature readings over time"
-        className="h-[205px] w-full overflow-visible"
-      >
+      <svg viewBox="0 0 720 205" role="img" aria-label="Temperature readings over time" className="h-[205px] w-full overflow-visible">
         <defs>
           <linearGradient id="trend-fill" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0" stopColor="#76a96d" stopOpacity=".2" />
@@ -503,39 +510,39 @@ function TemperatureChart({ readings }) {
         {[50, 100, 150].map((y) => (
           <line key={y} x1="28" x2="694" y1={y} y2={y} stroke="#edf1eb" strokeDasharray="4 5" />
         ))}
+        <line x1="30" x2="694" y1={refHighY} y2={refHighY} stroke="#f5d0ba" strokeDasharray="3 4" />
+        <line x1="30" x2="694" y1={refLowY} y2={refLowY} stroke="#d8ead6" strokeDasharray="3 4" />
         <polygon points={area} fill="url(#trend-fill)" />
-        <polyline
-          points={coords.join(" ")}
-          fill="none"
-          stroke="#57905f"
-          strokeWidth="3"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
+        <polyline points={coords.join(" ")} fill="none" stroke="#57905f" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
         {coords.map((coordinate, index) => {
           const [x, y] = coordinate.split(",");
+          const value = values[index];
+          const warn = value >= 39.6 || value < 37.0;
           return (
-            <circle key={points[index].id} cx={x} cy={y} r="4.5" fill="white" stroke="#57905f" strokeWidth="2.5">
-              <title>{`${values[index].toFixed(1)}°C · ${formatTime(points[index].recorded_at)}`}</title>
+            <circle key={points[index].id} cx={x} cy={y} r={warn ? 5.5 : 4.2} fill="white" stroke={warn ? "#c4522f" : "#57905f"} strokeWidth="2.5">
+              <title>{`${value.toFixed(1)}°C · ${formatTime(points[index].recorded_at)}`}</title>
             </circle>
           );
         })}
         <text x="2" y="54" className="fill-[#9aa59a] text-[10px]">41°</text>
         <text x="2" y="104" className="fill-[#9aa59a] text-[10px]">39°</text>
         <text x="2" y="154" className="fill-[#9aa59a] text-[10px]">37°</text>
-        <text x="28" y="198" className="fill-[#9aa59a] text-[10px]">
-          {formatShortDate(points[0].recorded_at)}
-        </text>
-        <text x="694" y="198" textAnchor="end" className="fill-[#9aa59a] text-[10px]">
-          {formatShortDate(points.at(-1).recorded_at)}
-        </text>
+        <text x="28" y="198" className="fill-[#9aa59a] text-[10px]">{formatShortDate(points[0].recorded_at)}</text>
+        <text x="694" y="198" textAnchor="end" className="fill-[#9aa59a] text-[10px]">{formatShortDate(points.at(-1).recorded_at)}</text>
       </svg>
     </div>
   );
 }
 
 function AnimalRow({ animal, reading }) {
-  const warning = animal.status === "needs_attention" || Number(reading?.temperature_c) >= 39.5;
+  const health = deriveHealth(reading);
+  const tones = {
+    good: "bg-[#eaf5ef] text-[#347247]",
+    info: "bg-[#eef3f9] text-[#2f5a85]",
+    warning: "bg-[#fbf3df] text-[#967116]",
+    critical: "bg-[#fbe2d4] text-[#8e3c2c]",
+    neutral: "bg-[#eff1eb] text-[#748071]",
+  };
   return (
     <tr className="border-b border-[#f0f3ee] text-xs last:border-0">
       <td className="py-3.5 pl-2">
@@ -546,82 +553,53 @@ function AnimalRow({ animal, reading }) {
           <span>
             <b className="block font-medium text-[#315946]">{animal.name}</b>
             <small className="mt-0.5 block text-[#899589]">
-              {animal.tag}
-              {animal.breed ? ` · ${animal.breed}` : ""}
+              {animal.tag}{animal.breed ? ` · ${animal.breed}` : ""}
             </small>
           </span>
         </div>
       </td>
-      <td className="py-3.5 text-[#526b57]">
-        {reading?.temperature_c == null ? "—" : `${Number(reading.temperature_c).toFixed(1)} °C`}
+      <td className="py-3.5 text-[#526b57]">{reading?.temperature_c == null ? "—" : `${Number(reading.temperature_c).toFixed(1)} °C`}</td>
+      <td className="py-3.5 text-[#526b57]">{reading?.heart_rate_bpm == null ? "—" : `${reading.heart_rate_bpm} bpm`}</td>
+      <td className="py-3.5 text-[#526b57]">{(reading?.motion_pct ?? reading?.activity_level) == null ? "—" : `${Number(reading?.motion_pct ?? reading?.activity_level).toFixed(0)}%`}</td>
+      <td className="py-3.5">
+        <div className="flex flex-col gap-1">
+          <span className={`inline-flex w-fit items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-medium ${tones[health.tone]}`}>
+            <Icon type="health" />
+            {health.label}
+          </span>
+          {health.note && <span className="text-[10px] text-[#718073]">{health.note}</span>}
+        </div>
       </td>
-      <td className="py-3.5 text-[#526b57]">
-        {reading?.heart_rate_bpm == null ? "—" : `${reading.heart_rate_bpm} bpm`}
-      </td>
-      <td className="py-3.5 text-[#526b57]">
-        {reading?.activity_level == null ? "—" : `${reading.activity_level}%`}
-      </td>
-      <td className="py-3.5 pr-2">
-        <span
-          className={`rounded-full px-2.5 py-1 text-[10px] font-medium ${
-            warning
-              ? "bg-[#fbf3df] text-[#967116]"
-              : reading
-              ? "bg-[#eaf5ef] text-[#347247]"
-              : "bg-[#eff1eb] text-[#748071]"
-          }`}
-        >
-          {warning ? "Check needed" : reading ? "Looking well" : "No readings yet"}
-        </span>
-      </td>
+      <td className="py-3.5 pr-2 text-[11px] text-[#718073]">{reading?.recorded_at ? formatTime(reading.recorded_at) : "—"}</td>
     </tr>
   );
 }
 
-function AlertRow({ alert, animal, synthetic = false }) {
-  const title = synthetic ? "Temperature above usual range" : alert.title;
-  const message = synthetic
-    ? `${animal.name} has a high recent temperature reading.`
-    : alert.message;
+function AlertRow({ alert, animal }) {
+  const severityColor = {
+    critical: "bg-[#fbe2d4] text-[#8e3c2c] border-[#f3c9b3]",
+    warning: "bg-[#fffdf7] text-[#7a6233] border-[#f1ead8]",
+    info: "bg-[#eef5fb] text-[#2f5a85] border-[#d9e5f2]",
+  }[alert?.severity || "warning"] || "bg-[#fbf3df] text-[#967116] border-[#f1ead8]";
+
   return (
-    <article className="flex gap-3 rounded-lg border border-[#f1ead8] bg-[#fffdf7] p-3">
-      <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-md bg-[#fbf0d4] text-[#967116]">
+    <article className={`flex gap-3 rounded-lg border ${severityColor} p-3`}>
+      <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-md bg-white/70 text-current">
         <Icon type="alert" />
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-2">
-          <p className="text-xs font-semibold text-[#4e4b3c]">{title || "Health alert"}</p>
-          <time className="shrink-0 text-[9px] text-[#9a9687]">
-            {!synthetic && formatTime(alert.created_at)}
-          </time>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-semibold uppercase tracking-wider opacity-80">{(alert?.severity || "warning")}</span>
+            <p className="text-xs font-semibold text-current">{alert?.title || "Health alert"}</p>
+          </div>
+          <time className="shrink-0 text-[9px] opacity-80">{alert?.created_at ? formatTime(alert.created_at) : ""}</time>
         </div>
-        <p className="mt-1 text-[10px] leading-4 text-[#7a7566]">
-            {(message || "Please review this animal’s latest reading.")}
-            {animal ? ` · ${animal.name}` : ""}
-          </p>
+        <p className="mt-1 text-[11px] leading-4 opacity-90">
+          {(alert?.message || "Please review this animal’s latest reading.")}{animal ? ` · ${animal.name}` : ""}
+        </p>
       </div>
     </article>
-  );
-}
-
-function HistoryRow({ reading, animal }) {
-  return (
-    <tr className="border-b border-[#f0f3ee] text-xs last:border-0">
-      <td className="py-3.5 pl-2 text-[#718073]">{formatTime(reading.recorded_at)}</td>
-      <td className="py-3.5 font-medium text-[#315946]">
-        {animal?.name || "Animal"}{" "}
-        <span className="font-normal text-[#899589]">{animal?.tag}</span>
-      </td>
-      <td className="py-3.5 text-[#526b57]">
-        {reading.temperature_c == null ? "—" : `${Number(reading.temperature_c).toFixed(1)} °C`}
-      </td>
-      <td className="py-3.5 text-[#526b57]">
-        {reading.heart_rate_bpm == null ? "—" : `${reading.heart_rate_bpm} bpm`}
-      </td>
-      <td className="py-3.5 pr-2 text-[#526b57]">
-        {reading.activity_level == null ? "—" : `${reading.activity_level}%`}
-      </td>
-    </tr>
   );
 }
 

@@ -107,11 +107,11 @@ export default async function DashboardPage() {
         supabase
           .from("sensor_readings")
           .select(
-            "id, animal_id, temperature_c, heart_rate_bpm, activity_level, recorded_at"
+            "id, animal_id, temperature_c, humidity_pct, heart_rate_bpm, motion_pct, activity_level, accel_x_g, accel_y_g, accel_z_g, gyro_x_dps, gyro_y_dps, gyro_z_dps, recorded_at"
           )
           .in("animal_id", animalIds)
           .order("recorded_at", { ascending: false })
-          .limit(100),
+          .limit(200),
         supabase
           .from("alerts")
           .select(
@@ -119,7 +119,7 @@ export default async function DashboardPage() {
           )
           .eq("farm_id", farm.id)
           .order("created_at", { ascending: false })
-          .limit(20),
+          .limit(40),
       ])
     : [{ data: [], error: null }, { data: [], error: null }];
 
